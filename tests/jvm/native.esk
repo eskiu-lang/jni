@@ -1,0 +1,162 @@
+import <mem>;
+import <string>;
+import <jni>;
+
+// The native side of JniTest.java.
+
+int Java_JniTest_add(*void env, *void cls, int a, int b) { return a + b; }
+
+*void Java_JniTest_echo(*void env, *void cls, *void s) {
+    JniEnv e = jni_env(env);
+    String t;
+    defer String_free(&t);
+    e.string(s, &t);
+    String_append(&t, "!");
+    return e.new_string(t.data);
+}
+
+int Java_JniTest_sum(*void env, *void cls, *void arr) {
+    JniEnv e = jni_env(env);
+    int n = e.array_length(arr);
+    *int p = e.int_elements(arr);
+    int s = 0;
+    for (i in 0..n) s += p[i];
+    e.release_ints(arr, p, JNI_ABORT);
+    return s;
+}
+
+*void Java_JniTest_scale(*void env, *void cls, *void arr, double k) {
+    JniEnv e = jni_env(env);
+    int n = e.array_length(arr);
+    *double buf = alloc<double>(n);
+    defer free((*void)buf);
+    e.get_doubles(arr, 0, n, buf);
+    for (i in 0..n) buf[i] = buf[i] * k;
+    *void out = e.new_double_array(n);
+    e.set_doubles(out, 0, n, buf);
+    return out;
+}
+
+*void Java_JniTest_describe(*void env, *void cls, *void obj) {
+    JniEnv e = jni_env(env);
+    *void c = e.object_class(obj);
+    Result<*void, string> m = e.method(c, "toString", "()Ljava/lang/String;");
+    if (!m.ok) return null;
+    return e.call_object(obj, m.value, null);
+}
+
+void Java_JniTest_fill(*void env, *void cls, *void p) {
+    JniEnv e = jni_env(env);
+    *void c = e.object_class(p);
+    e.set_int(p, e.field(c, "i", "I").value, 7);
+    e.set_long(p, e.field(c, "l", "J").value, (int64)0x123456789A);
+    e.set_float(p, e.field(c, "f", "F").value, (float)2.5);
+    e.set_double(p, e.field(c, "d", "D").value, -0.25);
+    e.set_bool(p, e.field(c, "b", "Z").value, true);
+    *void s = e.new_string("set");
+    e.set_object(p, e.field(c, "s", "Ljava/lang/String;").value, s);
+    e.delete_local(s);
+}
+
+uint8 Java_JniTest_throwIt(*void env, *void cls, *void msg) {
+    JniEnv e = jni_env(env);
+    String m;
+    defer String_free(&m);
+    e.string(msg, &m);
+    e.throw_new("java/lang/IllegalArgumentException", m.data);
+    return 0;
+}
+
+*void Java_JniTest_missing(*void env, *void cls) {
+    JniEnv e = jni_env(env);
+    Result<*void, string> r = e.find_class("no/Such");
+    if (r.ok || e.has_exception()) return e.new_string("unexpected");
+    return e.new_string(r.error);
+}
+
+int Java_JniTest_callStatic(*void env, *void cls) {
+    JniEnv e = jni_env(env);
+    Result<*void, string> m = e.static_method(cls, "twice", "(I)I");
+    if (!m.ok) return -1;
+    JValue[1] a = {jvalue_int(21)};
+    return e.call_static_int(cls, m.value, &a[0]);
+}
+
+*void Java_JniTest_makeList(*void env, *void cls) {
+    JniEnv e = jni_env(env);
+    Result<*void, string> c = e.find_class("java/util/ArrayList");
+    if (!c.ok) return null;
+    *void list = e.new_object(c.value, e.method(c.value, "<init>", "()V").value, null);
+    *void x = e.new_string("x");
+    JValue[1] a = {jvalue_object(x)};
+    if (!e.call_bool(list, e.method(c.value, "add", "(Ljava/lang/Object;)Z").value, &a[0])) return null;
+    return list;
+}
+
+*void Java_JniTest_takeException(*void env, *void cls) {
+    JniEnv e = jni_env(env);
+    e.call_static_void(cls, e.static_method(cls, "boom", "()V").value, null);
+    String msg;
+    defer String_free(&msg);
+    if (!e.take_exception(&msg)) return e.new_string("no exception");
+    return e.new_string(msg.data);
+}
+
+int Java_JniTest_version(*void env, *void cls) { return jni_env(env).version(); }
+
+uint8 Java_JniTest_attach(*void env, *void cls) {
+    JniEnv e = jni_env(env);
+    JavaVm vm = e.vm();
+    Result<JniEnv, string> a = vm.env(JNI_VERSION_1_6);
+    Result<JniEnv, string> b = vm.attach();
+    return a.ok && b.ok && a.value.env == env && b.value.env == env ? 1 : 0;
+}
+
+int Java_JniTest_refs(*void env, *void cls, *void o) {
+    JniEnv e = jni_env(env);
+    if (!e.push_frame(4)) return -1;
+    *void g = e.new_global(o);
+    *void kept = e.pop_frame(g);
+    int same = e.is_same(kept, o) && e.is_same(g, o) ? 1 : 0;
+    e.delete_global(g);
+    return same;
+}
+
+int Java_JniTest_direct(*void env, *void cls, *void buf) {
+    JniEnv e = jni_env(env);
+    *uint8 p = (*uint8)e.buffer_address(buf);
+    int64 n = e.buffer_capacity(buf);
+    for (i in 0..n) p[i] = (uint8)(i + 1);
+    return (int)n;
+}
+
+*void Java_JniTest_strings(*void env, *void cls, int n) {
+    JniEnv e = jni_env(env);
+    *void sc = e.find_class("java/lang/String").value;
+    *void arr = e.new_object_array(n, sc, null);
+    String t;
+    defer String_free(&t);
+    for (i in 0..n) {
+        String_clear(&t);
+        String_appendf(&t, "s%d", i);
+        *void s = e.new_string(t.data);
+        e.set_object_at(arr, i, s);
+        e.delete_local(s);
+    }
+    *void first = e.object_at(arr, 0);
+    if (first == null) return null;
+    return arr;
+}
+
+int registered_impl(*void env, *void cls, int x) { return x + 1; }
+
+int JNI_OnLoad(*void vm, *void reserved) {
+    JavaVm v = jni_vm(vm);
+    Result<JniEnv, string> e = v.env(JNI_VERSION_1_6);
+    if (!e.ok) return JNI_ERR;
+    Result<*void, string> cls = e.value.find_class("JniTest");
+    if (!cls.ok) return JNI_ERR;
+    JniNativeMethod[1] m = {JniNativeMethod{"registered", "(I)I", (*void)registered_impl}};
+    if (!e.value.register_natives(cls.value, &m[0], 1).ok) return JNI_ERR;
+    return JNI_VERSION_1_6;
+}

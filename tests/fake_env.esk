@@ -1,0 +1,113 @@
+import <io>;
+import <mem>;
+import <string>;
+import <jni>;
+
+// A fake JNIEnv: a function table whose slots are Eskiu functions, laid out like the
+// VM's. It checks that each wrapper calls the right slot with its arguments in place
+// (narrow integers, floats, 64-bit values, JValue arrays), and the UTF-8 <-> UTF-16
+// conversion and the Err paths of the ergonomic layer, with no JVM.
+
+*void[240] table;
+*void tablep;
+bool pending;
+int bool_field;
+float float_field;
+int64 long_field;
+List<uint16> chars;   // the one fake java.lang.String
+
+int f_version(*void env) { return JNI_VERSION_1_6; }
+*void f_find_class(*void env, string name) {
+    if (strcmp(name, "java/lang/String") == 0) return (*void)8;
+    pending = true;
+    return null;
+}
+uint8 f_exception_check(*void env) { return pending ? (uint8)1 : (uint8)0; }
+void f_exception_clear(*void env) { pending = false; }
+*void f_method(*void env, *void cls, string name, string sig) {
+    if (strcmp(name, "add") == 0) return (*void)16;
+    pending = true;
+    return null;
+}
+int f_call_int(*void env, *void obj, *void mid, *JValue args) {
+    return *(*int)&args[0].bits + *(*int)&args[1].bits;
+}
+double f_call_double(*void env, *void obj, *void mid, *JValue args) {
+    return *(*double)&args[0].bits * (double)*(*float)&args[1].bits;
+}
+void f_set_bool(*void env, *void obj, *void fid, uint8 v) { bool_field = (int)v; }
+uint8 f_get_bool(*void env, *void obj, *void fid) { return (uint8)bool_field; }
+void f_set_float(*void env, *void obj, *void fid, float v) { float_field = v; }
+float f_get_float(*void env, *void obj, *void fid) { return float_field; }
+void f_set_long(*void env, *void obj, *void fid, int64 v) { long_field = v; }
+int64 f_get_long(*void env, *void obj, *void fid) { return long_field; }
+*void f_new_string(*void env, *uint16 u, int n) {
+    chars.clear();
+    for (i in 0..n) chars.push(u[i]);
+    return (*void)&chars;
+}
+int f_string_length(*void env, *void s) { return chars.size; }
+void f_string_region(*void env, *void s, int start, int n, *uint16 out) {
+    for (i in 0..n) out[i] = chars.data[start + i];
+}
+
+int fail(string what) {
+    printf("FAIL: %s\n", what);
+    return 1;
+}
+
+int main() {
+    table[JNI_SLOT_GetVersion] = (*void)f_version;
+    table[JNI_SLOT_FindClass] = (*void)f_find_class;
+    table[JNI_SLOT_ExceptionCheck] = (*void)f_exception_check;
+    table[JNI_SLOT_ExceptionClear] = (*void)f_exception_clear;
+    table[JNI_SLOT_GetMethodID] = (*void)f_method;
+    table[JNI_SLOT_CallIntMethodA] = (*void)f_call_int;
+    table[JNI_SLOT_CallDoubleMethodA] = (*void)f_call_double;
+    table[JNI_SLOT_SetBooleanField] = (*void)f_set_bool;
+    table[JNI_SLOT_GetBooleanField] = (*void)f_get_bool;
+    table[JNI_SLOT_SetFloatField] = (*void)f_set_float;
+    table[JNI_SLOT_GetFloatField] = (*void)f_get_float;
+    table[JNI_SLOT_SetLongField] = (*void)f_set_long;
+    table[JNI_SLOT_GetLongField] = (*void)f_get_long;
+    table[JNI_SLOT_NewString] = (*void)f_new_string;
+    table[JNI_SLOT_GetStringLength] = (*void)f_string_length;
+    table[JNI_SLOT_GetStringRegion] = (*void)f_string_region;
+    tablep = (*void)&table[0];
+    JniEnv e = jni_env((*void)&tablep);
+
+    if (e.version() != JNI_VERSION_1_6) return fail("version");
+    Result<*void, string> cls = e.find_class("java/lang/String");
+    if (!cls.ok || cls.value != (*void)8) return fail("find_class");
+    Result<*void, string> missing = e.find_class("no/Such");
+    if (missing.ok || strstr(missing.error, "no/Such") == null || pending) return fail("find_class error");
+    Result<*void, string> mid = e.method(cls.value, "add", "(II)I");
+    if (!mid.ok) return fail("method");
+    if (e.method(cls.value, "nope", "()V").ok || pending) return fail("method error");
+    JValue[2] args = {jvalue_int(40), jvalue_int(2)};
+    if (e.call_int(null, mid.value, &args[0]) != 42) return fail("call_int");
+    JValue[2] dargs = {jvalue_double(1.5), jvalue_float((float)4.0)};
+    if (e.call_double(null, mid.value, &dargs[0]) != 6.0) return fail("call_double");
+    e.set_bool(null, null, true);
+    if (!e.get_bool(null, null) || bool_field != 1) return fail("bool field");
+    e.set_float(null, null, (float)2.5);
+    if (e.get_float(null, null) != (float)2.5) return fail("float field");
+    e.set_long(null, null, (int64)0x123456789A);
+    if (e.get_long(null, null) != (int64)0x123456789A) return fail("long field");
+
+    // UTF-8 -> UTF-16 -> UTF-8, with a supplementary character and invalid bytes.
+    string text = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z";
+    *void s = e.new_string(text);
+    if (chars.size != 6 || chars.data[3] != (uint16)0xD83D || chars.data[4] != (uint16)0xDE00) return fail("new_string utf16");
+    String back;
+    defer String_free(&back);
+    if (!e.string(s, &back) || strcmp(back.data, text) != 0) return fail("string round trip");
+    e.new_string("x\xFFy\xC3");
+    if (chars.size != 4 || chars.data[1] != (uint16)0xFFFD || chars.data[3] != (uint16)0xFFFD) return fail("invalid utf-8");
+    chars.clear();
+    chars.push((uint16)0x41);
+    chars.push((uint16)0xD800);
+    if (!e.string(s, &back) || strcmp(back.data, "A\xEF\xBF\xBD") != 0) return fail("unpaired surrogate");
+    printf("ok\n");
+    return 0;
+}
