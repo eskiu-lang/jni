@@ -1,0 +1,32 @@
+// A native method for an Android app (or any JVM), written in Eskiu.
+//
+//   package com.example.hello;
+//   public class Greeter {
+//       static { System.loadLibrary("hello"); }
+//       public static native String greet(String name);
+//   }
+//
+// Build it for each Android ABI and drop the libraries into app/src/main/jniLibs:
+//
+//   eskiuc examples/hello/hello.esk --target aarch64-linux-android24 -o jniLibs/arm64-v8a/libhello.so
+//   eskiuc examples/hello/hello.esk --target x86_64-linux-android24 -o jniLibs/x86_64/libhello.so
+//
+// Or on a desktop JVM: eskiuc examples/hello/hello.esk -o libhello.dylib (.so, .dll)
+// and run with -Djava.library.path=.
+
+import <string>;
+import <jni>;
+
+*void Java_com_example_hello_Greeter_greet(*void env, *void cls, *void name) {
+    JniEnv e = jni_env(env);
+    String who;
+    defer String_free(&who);
+    if (!e.string(name, &who)) {
+        e.throw_new("java/lang/NullPointerException", "name");
+        return null;
+    }
+    String out;
+    defer String_free(&out);
+    String_appendf(&out, "Hello, %s, from Eskiu", who.data);
+    return e.new_string(out.data);
+}
