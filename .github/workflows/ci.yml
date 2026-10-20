@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Eskiu
+        run: |
+          curl -fsSL https://eskiu-lang.org/install.sh | ESKIU_PREFIX=$HOME/.eskiu sh
+          echo "$HOME/.eskiu/bin" >> $GITHUB_PATH
+      - name: Tests
+        run: eskiuc test
+      - name: JVM
+        run: tests/jvm/check.sh
+      - name: Android ABIs compile
+        run: |
+          for t in aarch64-linux-android24 x86_64-linux-android24 armv7a-linux-androideabi24 i686-linux-android24; do
+            eskiuc tests/jvm/native.esk --target $t -c -o build/native-$t.o
+          done
+      - name: No JVM on wasm and iOS
+        run: |
+          ! eskiuc tests/jvm/native.esk --target wasm32-unknown-emscripten -c -o build/x.o 2> build/err.txt
+          grep -q "no Java VM" build/err.txt
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Eskiu
+        run: brew install eskiu-lang/eskiu/eskiu
+      - name: Tests
+        run: eskiuc test
+      - name: JVM
+        run: tests/jvm/check.sh
+      - name: Example
+        run: |
+          mkdir -p build/hello
+          eskiuc examples/hello/hello.esk -o build/hello/libhello.dylib
+          javac -d build/hello examples/hello/com/example/hello/Greeter.java
+          java -Djava.library.path=build/hello -cp build/hello com.example.hello.Greeter Eskiu | tee build/hello.txt
+          grep -q "Hello, Eskiu, from Eskiu" build/hello.txt
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc unzip
+          path-type: inherit
+      - name: Install Eskiu
+        run: |
+          curl -fsSL -o eskiu.zip https://github.com/eskiu-lang/eskiu/releases/latest/download/eskiuc-windows-x86_64.zip
+          # The archive's paths use backslashes; unzip extracts it and exits with 1 (a warning).
+          unzip -q eskiu.zip -d $HOME/eskiu || [ $? -eq 1 ]
+          test -x $HOME/eskiu/bin/eskiuc.exe
+      - name: Tests
+        run: |
+          export PATH="$HOME/eskiu/bin:$PATH"
+          CC=gcc eskiuc test
+      - name: JVM
+        run: |
+          export PATH="$HOME/eskiu/bin:$PATH"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          CC=gcc tests/jvm/check.sh
