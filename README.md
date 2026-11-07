@@ -63,49 +63,22 @@ eskiuc greeter.esk --target aarch64-linux-android24 -o app/src/main/jniLibs/arm6
 eskiuc greeter.esk -o libhello.dylib      # a desktop JVM: .dylib, .so or .dll
 ```
 
-## Modules
+## Documentation
 
-| Module | What it has |
-|---|---|
-| `<jni>` | `JniEnv`, `JavaVm`, `jni_env`, `jni_vm`, `jvalue_*` |
-| `<jni/raw>` | every JNIEnv function as `jni_Name(env, ...)`, the JavaVM ones as `jvm_Name(vm, ...)`, the `JNI_*` constants, `JValue`, `JniNativeMethod` |
-
-Objects, classes, method and field ids are `*void`, as JNI's opaque references are. A
-native method's parameters follow the Java signature: `int` for `int`, `int64` for `long`,
-`float`, `double`, `uint8` for `boolean`, and `*void` for every object.
-
-## Guides
-
+- [Modules](docs/README.md#modules)
+- [Platforms](docs/README.md#platforms)
+- [Contributing](docs/README.md#contributing)
 - [Using jni](docs/guide.md): `JniEnv` by area (calls, fields, arrays, exceptions,
-  references), threads and `JNI_OnLoad` through `JavaVm`, and the raw tables
+- [API reference](docs/api.md): every public function and type
 - [API reference](docs/api.md): every public function and type
 
-## Platforms
+## Install
 
-| Platform | Status | Checked |
-|---|---|---|
-| Android arm64-v8a | runs | Android emulator (ART, API 35) |
-| Android x86_64, armeabi-v7a, x86 | compiles | CI |
-| Linux x86-64 (JDK 17) | runs | CI |
-| macOS arm64 (JDK 17) | runs | CI |
-| Windows x86-64 (JDK 17, MinGW) | runs | CI |
-| iOS, WebAssembly | not available | there is no Java VM: importing `<jni>` stops with an `#error` |
-
-## Contributing
-
-Bug reports are welcome; please include the program, the `eskiuc --version` output and the
-JVM or Android version. The tests run with:
+In an Eskiu package (Eskiu 0.14 or newer):
 
 ```bash
-eskiuc test                  # the wrappers against a fake JNIEnv: slots, argument passing, UTF-8
-tests/jvm/check.sh           # tests/jvm/native.esk on the system JDK, under -Xcheck:jni
-python3 tools/gen.py > src/raw.esk
+eskiuc add jni --git https://github.com/eskiu-lang/jni --rev v0.1.0
 ```
-
-`tests/jvm/JniTest.java` calls one native method per area of `JniEnv` (strings with
-supplementary characters, arrays, fields, calls, constructors, exceptions, references,
-direct buffers, `JNI_OnLoad` with `RegisterNatives`) and checks each result. CI runs it on
-Linux, macOS and Windows; the same program, dexed with `d8`, also passes on ART.
 
 ## License
 
