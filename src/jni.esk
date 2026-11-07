@@ -16,10 +16,13 @@ import <string>;
 import <result>;
 import <jni/raw>;
 
+// A JNIEnv pointer (`env`), valid on the thread it was given to; the JniEnv_ calls go
+// through it.
 struct JniEnv {
     *void env;
 }
 
+// A JavaVM pointer (`vm`), valid on every thread: keep it to get an env on another thread.
 struct JavaVm {
     *void vm;
 }
@@ -51,26 +54,31 @@ JValue jvalue_int(int v) {
     return j;
 }
 
+// A long argument.
 JValue jvalue_long(int64 v) { return JValue{v}; }
 
+// A float argument.
 JValue jvalue_float(float v) {
     JValue j;
     *(*float)&j.bits = v;
     return j;
 }
 
+// A double argument.
 JValue jvalue_double(double v) {
     JValue j;
     *(*double)&j.bits = v;
     return j;
 }
 
+// A boolean argument.
 JValue jvalue_bool(bool v) {
     JValue j;
     *(*uint8)&j.bits = v ? 1 : 0;
     return j;
 }
 
+// An object argument (a reference, or null).
 JValue jvalue_object(*void v) {
     JValue j;
     *(**void)&j.bits = v;
@@ -79,6 +87,7 @@ JValue jvalue_object(*void v) {
 
 // --- the VM ----------------------------------------------------------------
 
+// The JNI version of the VM (JNI_VERSION_1_6 and up), GetVersion.
 int JniEnv_version(const JniEnv* self) { return jni_GetVersion(self.env); }
 
 // The JavaVM this env belongs to, to keep for threads that call back later.
@@ -110,12 +119,17 @@ Result<JniEnv, string> JavaVm_attach_daemon(const JavaVm* self) {
     return Ok<JniEnv, string>(JniEnv{env});
 }
 
+// Detach the calling thread from the VM; its local references are freed.
 void JavaVm_detach(const JavaVm* self) { jvm_DetachCurrentThread(self.vm); }
 
 // --- exceptions --------------------------------------------------------------
 
+// Whether a Java exception is pending.
 bool JniEnv_has_exception(const JniEnv* self) { return jni_ExceptionCheck(self.env) != 0; }
+// Clear the pending exception, if any.
 void JniEnv_clear_exception(const JniEnv* self) { jni_ExceptionClear(self.env); }
+// Print the pending exception and its stack trace to stderr (the VM's ExceptionDescribe),
+// which also clears it.
 void JniEnv_describe_exception(const JniEnv* self) { jni_ExceptionDescribe(self.env); }
 
 // Throw a new exception of class `name` ("java/lang/IllegalArgumentException") with
@@ -272,8 +286,11 @@ Result<*void, string> JniEnv_find_class(const JniEnv* self, string name) {
     return Ok<*void, string>(c);
 }
 
+// The class of `obj`, a local reference.
 *void JniEnv_object_class(const JniEnv* self, *void obj) { return jni_GetObjectClass(self.env, obj); }
+// Whether `obj` is an instance of `cls` (true for null).
 bool JniEnv_is_instance_of(const JniEnv* self, *void obj, *void cls) { return jni_IsInstanceOf(self.env, obj, cls) != 0; }
+// Whether `a` and `b` refer to the same object (two nulls are the same).
 bool JniEnv_is_same(const JniEnv* self, *void a, *void b) { return jni_IsSameObject(self.env, a, b) != 0; }
 
 // A method id by name and JNI signature ("(ILjava/lang/String;)V").
@@ -286,6 +303,8 @@ Result<*void, string> JniEnv_method(const JniEnv* self, *void cls, string name, 
     return Ok<*void, string>(m);
 }
 
+// A static method id by name and JNI signature; Err (with the exception cleared) when
+// there is none.
 Result<*void, string> JniEnv_static_method(const JniEnv* self, *void cls, string name, string sig) {
     *void m = jni_GetStaticMethodID(self.env, cls, name, sig);
     if (m == null) {
@@ -295,6 +314,8 @@ Result<*void, string> JniEnv_static_method(const JniEnv* self, *void cls, string
     return Ok<*void, string>(m);
 }
 
+// An instance field id by name and JNI type signature ("I", "Ljava/lang/String;"); Err
+// (with the exception cleared) when there is none.
 Result<*void, string> JniEnv_field(const JniEnv* self, *void cls, string name, string sig) {
     *void f = jni_GetFieldID(self.env, cls, name, sig);
     if (f == null) {
@@ -304,6 +325,8 @@ Result<*void, string> JniEnv_field(const JniEnv* self, *void cls, string name, s
     return Ok<*void, string>(f);
 }
 
+// A static field id by name and JNI type signature; Err (with the exception cleared) when
+// there is none.
 Result<*void, string> JniEnv_static_field(const JniEnv* self, *void cls, string name, string sig) {
     *void f = jni_GetStaticFieldID(self.env, cls, name, sig);
     if (f == null) {
@@ -324,20 +347,48 @@ Result<int, string> JniEnv_register_natives(const JniEnv* self, *void cls, *JniN
 
 // --- calls (args: a JValue array, or null for none) ------------------------------
 
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// nothing. A Java exception it throws stays pending.
 void JniEnv_call_void(const JniEnv* self, *void obj, *void mid, *JValue args) { jni_CallVoidMethodA(self.env, obj, mid, args); }
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// its int. A Java exception it throws stays pending.
 int JniEnv_call_int(const JniEnv* self, *void obj, *void mid, *JValue args) { return jni_CallIntMethodA(self.env, obj, mid, args); }
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// its long. A Java exception it throws stays pending.
 int64 JniEnv_call_long(const JniEnv* self, *void obj, *void mid, *JValue args) { return jni_CallLongMethodA(self.env, obj, mid, args); }
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// its float. A Java exception it throws stays pending.
 float JniEnv_call_float(const JniEnv* self, *void obj, *void mid, *JValue args) { return jni_CallFloatMethodA(self.env, obj, mid, args); }
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// its double. A Java exception it throws stays pending.
 double JniEnv_call_double(const JniEnv* self, *void obj, *void mid, *JValue args) { return jni_CallDoubleMethodA(self.env, obj, mid, args); }
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// its boolean. A Java exception it throws stays pending.
 bool JniEnv_call_bool(const JniEnv* self, *void obj, *void mid, *JValue args) { return jni_CallBooleanMethodA(self.env, obj, mid, args) != 0; }
+// Calls instance method `mid` of `obj` with `args` (a JValue array, or null) and returns
+// its object (a local reference). A Java exception it throws stays pending.
 *void JniEnv_call_object(const JniEnv* self, *void obj, *void mid, *JValue args) { return jni_CallObjectMethodA(self.env, obj, mid, args); }
 
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns
+// nothing. A Java exception it throws stays pending.
 void JniEnv_call_static_void(const JniEnv* self, *void cls, *void mid, *JValue args) { jni_CallStaticVoidMethodA(self.env, cls, mid, args); }
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns its
+// int. A Java exception it throws stays pending.
 int JniEnv_call_static_int(const JniEnv* self, *void cls, *void mid, *JValue args) { return jni_CallStaticIntMethodA(self.env, cls, mid, args); }
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns its
+// long. A Java exception it throws stays pending.
 int64 JniEnv_call_static_long(const JniEnv* self, *void cls, *void mid, *JValue args) { return jni_CallStaticLongMethodA(self.env, cls, mid, args); }
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns its
+// float. A Java exception it throws stays pending.
 float JniEnv_call_static_float(const JniEnv* self, *void cls, *void mid, *JValue args) { return jni_CallStaticFloatMethodA(self.env, cls, mid, args); }
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns its
+// double. A Java exception it throws stays pending.
 double JniEnv_call_static_double(const JniEnv* self, *void cls, *void mid, *JValue args) { return jni_CallStaticDoubleMethodA(self.env, cls, mid, args); }
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns its
+// boolean. A Java exception it throws stays pending.
 bool JniEnv_call_static_bool(const JniEnv* self, *void cls, *void mid, *JValue args) { return jni_CallStaticBooleanMethodA(self.env, cls, mid, args) != 0; }
+// Calls static method `mid` of `cls` with `args` (a JValue array, or null) and returns its
+// object (a local reference). A Java exception it throws stays pending.
 *void JniEnv_call_static_object(const JniEnv* self, *void cls, *void mid, *JValue args) { return jni_CallStaticObjectMethodA(self.env, cls, mid, args); }
 
 // A new object through constructor `ctor` ("<init>").
@@ -345,76 +396,132 @@ bool JniEnv_call_static_bool(const JniEnv* self, *void cls, *void mid, *JValue a
 
 // --- fields ---------------------------------------------------------------------
 
+// The int field `fid` of `obj`.
 int JniEnv_get_int(const JniEnv* self, *void obj, *void fid) { return jni_GetIntField(self.env, obj, fid); }
+// The long field `fid` of `obj`.
 int64 JniEnv_get_long(const JniEnv* self, *void obj, *void fid) { return jni_GetLongField(self.env, obj, fid); }
+// The float field `fid` of `obj`.
 float JniEnv_get_float(const JniEnv* self, *void obj, *void fid) { return jni_GetFloatField(self.env, obj, fid); }
+// The double field `fid` of `obj`.
 double JniEnv_get_double(const JniEnv* self, *void obj, *void fid) { return jni_GetDoubleField(self.env, obj, fid); }
+// The boolean field `fid` of `obj`.
 bool JniEnv_get_bool(const JniEnv* self, *void obj, *void fid) { return jni_GetBooleanField(self.env, obj, fid) != 0; }
+// The object field `fid` of `obj` (a local reference).
 *void JniEnv_get_object(const JniEnv* self, *void obj, *void fid) { return jni_GetObjectField(self.env, obj, fid); }
 
+// Sets the int field `fid` of `obj` to `v`.
 void JniEnv_set_int(const JniEnv* self, *void obj, *void fid, int v) { jni_SetIntField(self.env, obj, fid, v); }
+// Sets the long field `fid` of `obj` to `v`.
 void JniEnv_set_long(const JniEnv* self, *void obj, *void fid, int64 v) { jni_SetLongField(self.env, obj, fid, v); }
+// Sets the float field `fid` of `obj` to `v`.
 void JniEnv_set_float(const JniEnv* self, *void obj, *void fid, float v) { jni_SetFloatField(self.env, obj, fid, v); }
+// Sets the double field `fid` of `obj` to `v`.
 void JniEnv_set_double(const JniEnv* self, *void obj, *void fid, double v) { jni_SetDoubleField(self.env, obj, fid, v); }
+// Sets the boolean field `fid` of `obj` to `v`.
 void JniEnv_set_bool(const JniEnv* self, *void obj, *void fid, bool v) { jni_SetBooleanField(self.env, obj, fid, v ? 1 : 0); }
+// Sets the object field `fid` of `obj` to `v`.
 void JniEnv_set_object(const JniEnv* self, *void obj, *void fid, *void v) { jni_SetObjectField(self.env, obj, fid, v); }
 
+// The static int field `fid` of `cls`.
 int JniEnv_get_static_int(const JniEnv* self, *void cls, *void fid) { return jni_GetStaticIntField(self.env, cls, fid); }
+// The static object field `fid` of `cls` (a local reference).
 *void JniEnv_get_static_object(const JniEnv* self, *void cls, *void fid) { return jni_GetStaticObjectField(self.env, cls, fid); }
+// Sets the static int field `fid` of `cls` to `v`.
 void JniEnv_set_static_int(const JniEnv* self, *void cls, *void fid, int v) { jni_SetStaticIntField(self.env, cls, fid, v); }
 
 // --- arrays ---------------------------------------------------------------------
 
+// The number of elements of a Java array.
 int JniEnv_array_length(const JniEnv* self, *void arr) { return jni_GetArrayLength(self.env, arr); }
 
+// A new byte[] of `n` zeros (a local reference); null with an OutOfMemoryError pending
+// when the VM cannot make it.
 *void JniEnv_new_byte_array(const JniEnv* self, int n) { return jni_NewByteArray(self.env, n); }
+// A new int[] of `n` zeros (a local reference); null with an OutOfMemoryError pending when
+// the VM cannot make it.
 *void JniEnv_new_int_array(const JniEnv* self, int n) { return jni_NewIntArray(self.env, n); }
+// A new long[] of `n` zeros (a local reference); null with an OutOfMemoryError pending
+// when the VM cannot make it.
 *void JniEnv_new_long_array(const JniEnv* self, int n) { return jni_NewLongArray(self.env, n); }
+// A new float[] of `n` zeros (a local reference); null with an OutOfMemoryError pending
+// when the VM cannot make it.
 *void JniEnv_new_float_array(const JniEnv* self, int n) { return jni_NewFloatArray(self.env, n); }
+// A new double[] of `n` zeros (a local reference); null with an OutOfMemoryError pending
+// when the VM cannot make it.
 *void JniEnv_new_double_array(const JniEnv* self, int n) { return jni_NewDoubleArray(self.env, n); }
 
 // A new Object[] of class `cls` with every element `init` (null for none).
 *void JniEnv_new_object_array(const JniEnv* self, int n, *void cls, *void init) { return jni_NewObjectArray(self.env, n, cls, init); }
+// Element `i` of an Object[] (a local reference).
 *void JniEnv_object_at(const JniEnv* self, *void arr, int i) { return jni_GetObjectArrayElement(self.env, arr, i); }
+// Sets element `i` of an Object[] to `v`.
 void JniEnv_set_object_at(const JniEnv* self, *void arr, int i, *void v) { jni_SetObjectArrayElement(self.env, arr, i, v); }
 
 // Copy n elements from `start` out of the array (get_*) or into it (set_*).
 void JniEnv_get_bytes(const JniEnv* self, *void arr, int start, int n, *int8 buf) { jni_GetByteArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements from `start` of an int[] into `buf`.
 void JniEnv_get_ints(const JniEnv* self, *void arr, int start, int n, *int buf) { jni_GetIntArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements from `start` of a long[] into `buf`.
 void JniEnv_get_longs(const JniEnv* self, *void arr, int start, int n, *int64 buf) { jni_GetLongArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements from `start` of a float[] into `buf`.
 void JniEnv_get_floats(const JniEnv* self, *void arr, int start, int n, *float buf) { jni_GetFloatArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements from `start` of a double[] into `buf`.
 void JniEnv_get_doubles(const JniEnv* self, *void arr, int start, int n, *double buf) { jni_GetDoubleArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements of `buf` into a byte[] from `start`.
 void JniEnv_set_bytes(const JniEnv* self, *void arr, int start, int n, *int8 buf) { jni_SetByteArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements of `buf` into an int[] from `start`.
 void JniEnv_set_ints(const JniEnv* self, *void arr, int start, int n, *int buf) { jni_SetIntArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements of `buf` into a long[] from `start`.
 void JniEnv_set_longs(const JniEnv* self, *void arr, int start, int n, *int64 buf) { jni_SetLongArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements of `buf` into a float[] from `start`.
 void JniEnv_set_floats(const JniEnv* self, *void arr, int start, int n, *float buf) { jni_SetFloatArrayRegion(self.env, arr, start, n, buf); }
+// Copies `n` elements of `buf` into a double[] from `start`.
 void JniEnv_set_doubles(const JniEnv* self, *void arr, int start, int n, *double buf) { jni_SetDoubleArrayRegion(self.env, arr, start, n, buf); }
 
 // Direct access to the elements (possibly a copy); release with the same array and
 // pointer, mode 0 (copy back and free), JNI_COMMIT (copy back) or JNI_ABORT (free only).
 *int8 JniEnv_byte_elements(const JniEnv* self, *void arr) { return jni_GetByteArrayElements(self.env, arr, null); }
+// The elements of an int[] (possibly a copy); give them back with release_ints.
 *int JniEnv_int_elements(const JniEnv* self, *void arr) { return jni_GetIntArrayElements(self.env, arr, null); }
+// The elements of a long[] (possibly a copy); give them back with release_longs.
 *int64 JniEnv_long_elements(const JniEnv* self, *void arr) { return jni_GetLongArrayElements(self.env, arr, null); }
+// The elements of a float[] (possibly a copy); give them back with release_floats.
 *float JniEnv_float_elements(const JniEnv* self, *void arr) { return jni_GetFloatArrayElements(self.env, arr, null); }
+// The elements of a double[] (possibly a copy); give them back with release_doubles.
 *double JniEnv_double_elements(const JniEnv* self, *void arr) { return jni_GetDoubleArrayElements(self.env, arr, null); }
+// Gives back the elements a byte_elements call returned, with `mode` 0, JNI_COMMIT or
+// JNI_ABORT.
 void JniEnv_release_bytes(const JniEnv* self, *void arr, *int8 p, int mode) { jni_ReleaseByteArrayElements(self.env, arr, p, mode); }
+// Gives back the elements an int_elements call returned, with `mode` 0, JNI_COMMIT or
+// JNI_ABORT.
 void JniEnv_release_ints(const JniEnv* self, *void arr, *int p, int mode) { jni_ReleaseIntArrayElements(self.env, arr, p, mode); }
+// Gives back the elements a long_elements call returned, with `mode` 0, JNI_COMMIT or
+// JNI_ABORT.
 void JniEnv_release_longs(const JniEnv* self, *void arr, *int64 p, int mode) { jni_ReleaseLongArrayElements(self.env, arr, p, mode); }
+// Gives back the elements a float_elements call returned, with `mode` 0, JNI_COMMIT or
+// JNI_ABORT.
 void JniEnv_release_floats(const JniEnv* self, *void arr, *float p, int mode) { jni_ReleaseFloatArrayElements(self.env, arr, p, mode); }
+// Gives back the elements a double_elements call returned, with `mode` 0, JNI_COMMIT or
+// JNI_ABORT.
 void JniEnv_release_doubles(const JniEnv* self, *void arr, *double p, int mode) { jni_ReleaseDoubleArrayElements(self.env, arr, p, mode); }
 
 // The address and capacity of a direct java.nio.ByteBuffer (null and -1 otherwise).
 *void JniEnv_buffer_address(const JniEnv* self, *void buf) { return jni_GetDirectBufferAddress(self.env, buf); }
+// The capacity in bytes of a direct java.nio.ByteBuffer, or -1 when `buf` is not one.
 int64 JniEnv_buffer_capacity(const JniEnv* self, *void buf) { return jni_GetDirectBufferCapacity(self.env, buf); }
 
 // --- references ---------------------------------------------------------------
 
 // A reference that outlives the native call (keep classes and callbacks this way).
 *void JniEnv_new_global(const JniEnv* self, *void obj) { return jni_NewGlobalRef(self.env, obj); }
+// Deletes a global reference made by new_global.
 void JniEnv_delete_global(const JniEnv* self, *void obj) { jni_DeleteGlobalRef(self.env, obj); }
+// Deletes a local reference before the native method returns (in loops that make many).
 void JniEnv_delete_local(const JniEnv* self, *void obj) { jni_DeleteLocalRef(self.env, obj); }
 
 // A frame of at least n local references; pop_frame frees them all but `result`, which
 // it returns as a reference in the outer frame.
 bool JniEnv_push_frame(const JniEnv* self, int n) { return jni_PushLocalFrame(self.env, n) == 0; }
+// Pops the frame push_frame made: frees its local references and returns `result` as a
+// reference in the outer frame (null for none).
 *void JniEnv_pop_frame(const JniEnv* self, *void result) { return jni_PopLocalFrame(self.env, result); }
